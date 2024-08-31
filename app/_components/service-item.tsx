@@ -1,5 +1,5 @@
 "use client"
-import { Barbershop, BarbershopService } from "@prisma/client"
+import { Barbershop, BarbershopService, Booking } from "@prisma/client"
 
 import Image from "next/image"
 import { Button } from "./ui/button"
@@ -10,15 +10,15 @@ import {
   SheetContent,
   SheetFooter,
   SheetHeader,
-  SheetTrigger,
 } from "./ui/sheet"
 import { Calendar } from "./ui/calendar"
 import { ptBR } from "date-fns/locale"
-import { useState } from "react"
-import { format, set } from "date-fns"
+import { useEffect, useState } from "react"
+import { addDays, format, set } from "date-fns"
 import { createBooking } from "../_actions/create-booking"
 import { useSession } from "next-auth/react"
 import { toast } from "sonner"
+import { getBookings } from "../_actions/get-bookings"
 
 interface ServiceItemProps {
   service: BarbershopService
@@ -49,12 +49,46 @@ const TIME_LIST = [
   "18:00",
 ]
 
+const getTimeList = (bookings: Booking[]) => {
+  return TIME_LIST.filter((time) => {
+    const hour = Number(time.split(":")[0])
+    const minutes = Number(time.split(":")[1])
+
+    const hashBookingOnCurrentTime = bookings.some(
+      (booking) =>
+        booking.date.getHours() === hour &&
+        booking.date.getMinutes() === minutes,
+    )
+
+    if (hashBookingOnCurrentTime) {
+      return false
+    }
+    return true
+  })
+}
+
 const ServiceItem = ({ service, barbershop }: ServiceItemProps) => {
   const { data } = useSession()
   const [selectedDay, setSelectedDay] = useState<Date | undefined>(undefined)
   const [selectedDayTime, setSelectedDayTime] = useState<String | undefined>(
     undefined,
   )
+  const [bookingSheetIsOpen, setBookingSheetIsOpen] = useState(false)
+  const [dayBookings, setDayBookings] = useState<Booking[]>([])
+
+  useEffect(() => {
+    const fetch = async () => {
+      if (!selectedDay) return
+      const bookings = await getBookings({
+        date: selectedDay,
+        serviceId: service.id,
+      })
+      setDayBookings(bookings)
+    }
+    fetch()
+  }, [selectedDay, service.id])
+
+  console.log({ dayBookings })
 
   const handleDaySelect = (date: Date | undefined) => {
     setSelectedDay(date)
@@ -62,6 +96,13 @@ const ServiceItem = ({ service, barbershop }: ServiceItemProps) => {
 
   const handleTimeSelect = (time: string) => {
     setSelectedDayTime(time)
+  }
+
+  const handleBookingSheetOpenChange = () => {
+    setSelectedDay(undefined)
+    setSelectedDayTime(undefined)
+    setDayBookings([])
+    setBookingSheetIsOpen(false)
   }
 
   const handleCreateBooking = async () => {
@@ -74,13 +115,13 @@ const ServiceItem = ({ service, barbershop }: ServiceItemProps) => {
         hours: hour,
       })
       toast.success("Reserva Criada com Sucesso!")
-      console.log(newDate)
 
       await createBooking({
         serviceId: service.id,
         userId: (data?.user as any).id,
         date: newDate,
       })
+      handleBookingSheetOpenChange()
     } catch (error) {
       console.error(error)
       toast.error("erro ao criar reserva")
@@ -109,18 +150,25 @@ const ServiceItem = ({ service, barbershop }: ServiceItemProps) => {
                 currency: "BRL",
               }).format(Number(service.price))}
             </p>
-            <Sheet>
-              <SheetTrigger asChild>
-                <Button variant="secondary" size="sm">
-                  Reservar
-                </Button>
-              </SheetTrigger>
+            <Sheet
+              open={bookingSheetIsOpen}
+              onOpenChange={handleBookingSheetOpenChange}
+            >
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setBookingSheetIsOpen(true)}
+              >
+                Reservar
+              </Button>
+
               <SheetContent className="px-0">
                 <SheetHeader>Fazer Reserva</SheetHeader>
                 <div className="border-b border-solid py-5">
                   <Calendar
                     selected={selectedDay}
                     onSelect={handleDaySelect}
+                    fromDate={addDays(new Date(), 1)}
                     mode={"single"}
                     locale={ptBR}
                     styles={{
@@ -150,7 +198,7 @@ const ServiceItem = ({ service, barbershop }: ServiceItemProps) => {
                 </div>
                 {selectedDay && (
                   <div className="flex gap-3 overflow-x-auto p-5 [&::-webkit-scrollbar]:hidden">
-                    {TIME_LIST.map((time) => (
+                    {getTimeList(dayBookings).map((time) => (
                       <Button
                         key={time}
                         variant={
